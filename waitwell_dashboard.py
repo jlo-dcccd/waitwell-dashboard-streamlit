@@ -792,4 +792,4 @@ else:
 # Footer
 st.sidebar.markdown("---")
 st.sidebar.markdown("**WaitWell Analytics Dashboard**")
-st.sidebar.markdown("Built with Streamlit & Plotly")
+st.sidebar.image("dallas-1.webp", use_column_width=True)
