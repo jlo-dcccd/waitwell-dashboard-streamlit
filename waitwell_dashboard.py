@@ -105,7 +105,7 @@ if st.session_state.data is not None:
     df = st.session_state.data
     
     # Location filter dropdown
-    st.sidebar.header("🏢 Location Filter")
+    st.sidebar.header("\U0001F3E2 Location Filter")
     locations = ['All Locations'] + sorted(df['Location Name'].unique().tolist())
     selected_location = st.sidebar.selectbox(
         "Select Location:",
@@ -121,8 +121,25 @@ if st.session_state.data is not None:
         filtered_df = df.copy()
         location_filter = None
 
-    # Week filter dropdown (placed under Location filter)
-    st.sidebar.header("📅 Week Filter")
+    # Queue Name filter
+    st.sidebar.header("\U0001F39F\uFE0F Queue Filter")
+    if 'Queue Name' in filtered_df.columns:
+        queues = ['All Queues'] + sorted(filtered_df['Queue Name'].dropna().unique().tolist())
+        selected_queue = st.sidebar.selectbox(
+            "Select Queue:",
+            queues,
+            help="Filter data by specific queue"
+        )
+        if selected_queue != 'All Queues':
+            filtered_df = filtered_df[filtered_df['Queue Name'] == selected_queue].copy()
+            queue_filter = selected_queue
+        else:
+            queue_filter = None
+    else:
+        queue_filter = None
+
+    # Week filter
+    st.sidebar.header("\U0001F4C5 Week Filter")
     if 'Week' in filtered_df.columns:
         weeks = ['All Weeks'] + sorted(filtered_df['Week'].dropna().unique().tolist())
         selected_week = st.sidebar.selectbox(
@@ -142,15 +159,19 @@ if st.session_state.data is not None:
     
     # Display filter info
     if location_filter:
-        st.sidebar.info(f"📍 Showing data for: **{location_filter}**")
+        st.sidebar.info(f"\U0001F4CD Showing data for: **{location_filter}**")
         st.sidebar.metric("Filtered Records", f"{len(filtered_df):,}")
     else:
-        st.sidebar.info("📍 Showing data for: **All Locations**")
+        st.sidebar.info("\U0001F4CD Showing data for: **All Locations**")
+    if queue_filter:
+        st.sidebar.info(f"\U0001F39F\uFE0F Showing data for: **{queue_filter}**")
+    else:
+        st.sidebar.info("\U0001F39F\uFE0F Showing data for: **All Queues**")
     if week_filter:
-        st.sidebar.info(f"🗓️ Showing data for: **Week {week_filter}**")
+        st.sidebar.info(f"\U0001F4C5 Showing data for: **Week {week_filter}**")
         st.sidebar.metric("Filtered Records", f"{len(filtered_df):,}")
     else:
-        st.sidebar.info("🗓️ Showing data for: **All Weeks**")
+        st.sidebar.info("\U0001F4C5 Showing data for: **All Weeks**")
 
 # Page navigation
 st.sidebar.header("📱 Navigation")
