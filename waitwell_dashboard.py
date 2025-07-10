@@ -8,6 +8,7 @@ from plotly.subplots import make_subplots
 import numpy as np
 from datetime import datetime, timedelta
 import io
+from streamlit_option_menu import option_menu
 
 # Configure page
 st.set_page_config(
@@ -71,9 +72,8 @@ if 'filtered_data' not in st.session_state:
 st.sidebar.title("🎛️ Dashboard Controls")
 
 # Data upload section
-st.sidebar.header("📁 Data Upload")
 uploaded_file = st.sidebar.file_uploader(
-    "Upload WaitWell Dataset (CSV)",
+    "📁 Upload WaitWell Dataset (CSV)",
     type=['csv'],
     help="Upload your cleaned WaitWell dataset"
 )
@@ -83,7 +83,7 @@ if uploaded_file is not None:
         # Load data
         df = pd.read_csv(uploaded_file)
         st.session_state.data = df
-        st.sidebar.success(f"✅ Data loaded successfully.")
+        st.toast("✅ Data loaded successfully.")
         
         # Data preprocessing
         if 'CreatedLocalTime' in df.columns:
@@ -105,10 +105,9 @@ if st.session_state.data is not None:
     df = st.session_state.data
     
     # Location filter dropdown
-    st.sidebar.header("\U0001F3E2 Location Filter")
     locations = ['All Locations'] + sorted(df['Location Name'].unique().tolist())
     selected_location = st.sidebar.selectbox(
-        "Select Location:",
+        "\U0001F3E2 Select Location:",
         locations,
         help="Filter data by specific location"
     )
@@ -122,11 +121,10 @@ if st.session_state.data is not None:
         location_filter = None
 
     # Queue Name filter
-    st.sidebar.header("\U0001F39F\uFE0F Queue Filter")
     if 'Queue Name' in filtered_df.columns:
         queues = ['All Queues'] + sorted(filtered_df['Queue Name'].dropna().unique().tolist())
         selected_queue = st.sidebar.selectbox(
-            "Select Queue:",
+            "\U0001F39F\uFE0F Select Queue:",
             queues,
             help="Filter data by specific queue"
         )
@@ -139,11 +137,10 @@ if st.session_state.data is not None:
         queue_filter = None
 
     # Week filter
-    st.sidebar.header("\U0001F4C5 Week Filter")
     if 'Week' in filtered_df.columns:
         weeks = ['All Weeks'] + sorted(filtered_df['Week'].dropna().unique().tolist())
         selected_week = st.sidebar.selectbox(
-            "Select Week:",
+            "\U0001F4C5 Select Week:",
             weeks,
             help="Filter data by specific week"
         )
@@ -156,34 +153,32 @@ if st.session_state.data is not None:
         week_filter = None
 
     st.session_state.filtered_data = filtered_df
-    
-    # Display filter info
-    if location_filter:
-        st.sidebar.info(f"\U0001F4CD Showing data for: **{location_filter}**")
-        st.sidebar.metric("Filtered Records", f"{len(filtered_df):,}")
-    else:
-        st.sidebar.info("\U0001F4CD Showing data for: **All Locations**")
-    if queue_filter:
-        st.sidebar.info(f"\U0001F39F\uFE0F Showing data for: **{queue_filter}**")
-    else:
-        st.sidebar.info("\U0001F39F\uFE0F Showing data for: **All Queues**")
-    if week_filter:
-        st.sidebar.info(f"\U0001F4C5 Showing data for: **Week {week_filter}**")
-        st.sidebar.metric("Filtered Records", f"{len(filtered_df):,}")
-    else:
-        st.sidebar.info("\U0001F4C5 Showing data for: **All Weeks**")
 
 # Page navigation
-st.sidebar.header("📱 Navigation")
 pages = {
-    "📊 Overview Dashboard": "overview",
-    "📈 Operational Metrics": "operational", 
-    "⏰ Time Analysis": "time_analysis",
-    "👥 Staff Performance": "staff_performance",
-    "📋 Service Analysis": "service_analysis"
+    "\U0001F4CA Overview Dashboard": "overview",
+    "\U0001F4C8 Operational Metrics": "operational", 
+    "\u23F0 Time Analysis": "time_analysis",
+    "\U0001F465 Staff Performance": "staff_performance",
+    "\U0001F4CB Service Analysis": "service_analysis"
 }
 
-selected_page = st.sidebar.radio("Select Dashboard:", list(pages.keys()))
+# Use a dark style for the option menu that works in both dark and light modes
+menu_styles = {
+    "container": {"padding": "0!important", "background-color": "#23243a"},
+    "nav-link": {"font-size": "14px", "text-align": "left", "margin":"0px", "color": "#f0f2f6", "--hover-color": "#3838ab33"},
+    "nav-link-selected": {"background-color": "#3838ab", "color": "#fff"},
+    "menu-title": {"font-size": "15px"}  
+}
+
+with st.sidebar:
+    selected_page = option_menu(
+        "Select Dashboard:",
+        list(pages.keys()),
+        menu_icon="clipboard-data",
+        default_index=0,
+        styles=menu_styles
+    )
 current_page = pages[selected_page]
 
 # Main content area
