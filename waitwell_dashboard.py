@@ -165,10 +165,11 @@ pages = {
 
 # Use a dark style for the option menu that works in both dark and light modes
 menu_styles = {
-    "container": {"padding": "0!important", "background-color": "#23243a"},
+    "container": {"padding": "0!important", "background-color": "#797575"},
     "nav-link": {"font-size": "14px", "text-align": "left", "margin":"0px", "color": "#f0f2f6", "--hover-color": "#3838ab33"},
     "nav-link-selected": {"background-color": "#3838ab", "color": "#fff"},
-    "menu-title": {"font-size": "15px"}  
+    # Set a fixed color for the menu title that works in both light and dark mode
+    "menu-title": {"font-size": "15px", "color": "#f0f2f6", "font-weight": "bold", "background": "#797575"}
 }
 
 with st.sidebar:
