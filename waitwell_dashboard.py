@@ -136,16 +136,17 @@ if st.session_state.data is not None:
     else:
         queue_filter = None
 
-    # Week filter
-    if 'Week' in filtered_df.columns:
-        weeks = ['All Weeks'] + sorted(filtered_df['Week'].dropna().unique().tolist())
+    # Week filter (using WeekStart column)
+    if 'WeekStart' in filtered_df.columns:
+        weeks = ['All Weeks'] + sorted(filtered_df['WeekStart'].dropna().unique().tolist())
         selected_week = st.sidebar.selectbox(
             "\U0001F4C5 Select Week:",
             weeks,
-            help="Filter data by specific week"
+            help="Filter data by specific week (WeekStart)"
         )
         if selected_week != 'All Weeks':
-            filtered_df = filtered_df[filtered_df['Week'] == selected_week].copy()
+            # Apply week filter
+            filtered_df = filtered_df[filtered_df['WeekStart'] == selected_week].copy()
             week_filter = selected_week
         else:
             week_filter = None
@@ -157,7 +158,6 @@ if st.session_state.data is not None:
 # Page navigation
 pages = {
     "\U0001F4CA Overview Dashboard": "overview",
-    "\U0001F4C8 Operational Metrics": "operational", 
     "\u23F0 Time Analysis": "time_analysis",
     "\U0001F465 Staff Performance": "staff_performance",
     "\U0001F4CB Service Analysis": "service_analysis"
@@ -223,39 +223,147 @@ else:
     
     # Overview Dashboard
     if current_page == "overview":
-        st.header("📊 Overview Dashboard")
+        # Show header with latest week value
+        if 'WeekStart' in df.columns:
+            latest_week = df['WeekStart'].max()
+            # Convert to datetime if not already
+            if not pd.api.types.is_datetime64_any_dtype(df['WeekStart']):
+                latest_week_dt = pd.to_datetime(latest_week)
+            else:
+                latest_week_dt = latest_week
+            st.header(f"📊 Overview for Week Starting {latest_week_dt.strftime('%Y-%m-%d')}")
+        else:
+            st.header(f"📊 This Week's Overview ")
         
         # Key metrics row
+        # Use base_df for metrics (filtered by location and queue only)
+        base_df = st.session_state.data.copy()
+        if location_filter:
+            base_df = base_df[base_df['Location Name'] == location_filter]
+        if queue_filter:
+            base_df = base_df[base_df['Queue Name'] == queue_filter]
+        # Filter to only latest week
+        if 'WeekStart' in base_df.columns:
+            latest_week = base_df['WeekStart'].max()
+            prev_week = base_df['WeekStart'].sort_values().unique()
+            prev_week = prev_week[-2] if len(prev_week) > 1 else None
+            latest_df = base_df[base_df['WeekStart'] == latest_week]
+            prev_df = base_df[base_df['WeekStart'] == prev_week] if prev_week is not None else pd.DataFrame(columns=base_df.columns)
+        else:
+            latest_df = base_df.copy()
+            prev_df = pd.DataFrame(columns=base_df.columns)
+        latest_completed = latest_df[latest_df['Status'] == 'Completed'] if 'Status' in latest_df.columns else latest_df
+        prev_completed = prev_df[prev_df['Status'] == 'Completed'] if 'Status' in prev_df.columns else prev_df
         col1, col2, col3, col4 = st.columns(4)
-        
         with col1:
-            total_tickets = len(df)
-            st.metric("Total Tickets", f"{total_tickets:,}")
-        
+            total_tickets = len(latest_df)
+            prev_total_tickets = len(prev_df)
+            completed_tickets = len(latest_completed)
+            prev_completed_tickets = len(prev_completed)
+            delta = ((completed_tickets - prev_completed_tickets) / prev_completed_tickets * 100) if prev_completed_tickets > 0 else None
+            st.metric("Completed Tickets", f"{completed_tickets:,}", delta=f"{delta:.1f}%" if delta is not None else None)
         with col2:
-            completed_tickets = len(df_completed)
+            completed_tickets = len(latest_completed)
+            prev_completed_tickets = len(prev_completed)
             completion_rate = (completed_tickets / total_tickets * 100) if total_tickets > 0 else 0
-            st.metric("Completion Rate", f"{completion_rate:.1f}%")
-        
+            prev_completion_rate = (prev_completed_tickets / prev_total_tickets * 100) if prev_total_tickets > 0 else 0
+            delta = completion_rate - prev_completion_rate if prev_total_tickets > 0 else None
+            st.metric("Completion Rate", f"{completion_rate:.1f}%", delta=f"{delta:.1f}%" if delta is not None else None)
         with col3:
-            if len(df_completed) > 0 and 'ActualWaitTimeMins' in df_completed.columns:
-                avg_wait = df_completed['ActualWaitTimeMins'].mean()
-                st.metric("Avg Wait Time", f"{avg_wait:.1f} min")
+            if len(latest_completed) > 0 and 'ActualWaitTimeMins' in latest_completed.columns:
+                median_wait = latest_completed['ActualWaitTimeMins'].median()
+                prev_median_wait = prev_completed['ActualWaitTimeMins'].median() if len(prev_completed) > 0 and 'ActualWaitTimeMins' in prev_completed.columns else None
+                delta = (median_wait - prev_median_wait) if prev_median_wait is not None else None
+                st.metric("Median Wait Time", f"{median_wait:.1f} min", delta=f"{delta:+.1f} min" if delta is not None else None, delta_color='inverse')
             else:
-                st.metric("Avg Wait Time", "N/A")
-        
+                st.metric("Median Wait Time", "N/A")
         with col4:
-            unique_locations = df['Location Name'].nunique() if 'Location Name' in df.columns else 0
-            st.metric("Locations", unique_locations)
+            # Peak Queue Length for the latest week with delta vs previous week
+            if 'Initial Position' in latest_df.columns:
+                peak_queue_length = latest_df['Initial Position'].max()
+                prev_peak_queue_length = prev_df['Initial Position'].max() if 'Initial Position' in prev_df.columns and not prev_df.empty else None
+                if prev_peak_queue_length is not None and pd.notnull(prev_peak_queue_length) and prev_peak_queue_length > 0:
+                    delta = ((peak_queue_length - prev_peak_queue_length) / prev_peak_queue_length) * 100
+                    st.metric("Peak Queue Length", int(peak_queue_length) if pd.notnull(peak_queue_length) else "N/A", delta=f"{delta:+.1f}%", delta_color='off')
+                else:
+                    st.metric("Peak Queue Length", int(peak_queue_length) if pd.notnull(peak_queue_length) else "N/A")
+            else:
+                st.metric("Peak Queue Length", "N/A")
 
-        if 'Week' in df.columns:
-            weekly_volume = df.groupby('Week').size().reset_index(name='Volume')
-            fig_weekly = px.bar(
-                weekly_volume, x='Week', y='Volume',
-                title="Weekly Volume Trend"
+        if 'WeekStart' in st.session_state.data.columns and 'Staff' in st.session_state.data.columns:
+            # Filter by location and queue only (not week)
+            base_df = st.session_state.data.copy()
+            if location_filter:
+                base_df = base_df[base_df['Location Name'] == location_filter]
+            if queue_filter:
+                base_df = base_df[base_df['Queue Name'] == queue_filter]
+            base_df = base_df[base_df['Status'] == 'Completed'] if 'Status' in base_df.columns else base_df
+            # Use WeekStart instead of Week
+            staff_per_week = base_df.groupby('WeekStart')['Staff'].nunique().reset_index()
+            staff_per_week.columns = ['WeekStart', 'Number of Staff']
+
+            queue_volume_per_week = base_df.groupby('WeekStart').size().reset_index(name='Queue Volume')
+            merged_weekly = pd.merge(staff_per_week, queue_volume_per_week, on='WeekStart', how='outer').sort_values('WeekStart')
+
+            if 'ActualWaitTimeMins' in base_df.columns:
+                median_wait_time_per_week = base_df.groupby('WeekStart')['ActualWaitTimeMins'].median().reset_index()
+                median_wait_time_per_week.columns = ['WeekStart', 'Median Wait Time (min)']
+                merged_weekly = merged_weekly.merge(median_wait_time_per_week, on='WeekStart', how='outer')
+            
+            # Create the plotly figure
+            fig = go.Figure()
+            
+            # Add call volume as a bar (left y-axis)
+            fig.add_trace(go.Bar(
+                x=merged_weekly['WeekStart'],
+                y=merged_weekly['Queue Volume'],
+                name='Queue Volume',
+                marker_color='blue',
+                opacity=0.7,
+                yaxis='y1'
+            ))
+            
+            # Add staff count as a line (right y-axis)
+            fig.add_trace(go.Scatter(
+                x=merged_weekly['WeekStart'],
+                y=merged_weekly['Number of Staff'],
+                name='Number of Staff',
+                mode='lines+markers',
+                marker=dict(size=7, color='orange'),
+                line=dict(width=2, color='orange'),
+                yaxis='y2'
+            ))
+
+            # Add median wait time if available (also on y2)
+            if 'Median Wait Time (min)' in merged_weekly.columns:
+                fig.add_trace(go.Scatter(
+                    x=merged_weekly['WeekStart'],
+                    y=merged_weekly['Median Wait Time (min)'],
+                    name='Median Wait Time (min)',
+                    mode='lines+markers',
+                    marker=dict(size=7, color='red'),
+                    line=dict(width=2, color='red', dash='dash'),
+                    yaxis='y2'
+                ))
+                
+            fig.update_layout(
+                title='Queue Volume, Number of Staff, and Median Wait Time Per Week',
+                xaxis_title='Week Start',
+                yaxis=dict(
+                    title='Queue Volume',
+                    side='left'
+                ),
+                yaxis2=dict(
+                    title='Number of Staff / Median Wait Time (min)',
+                    overlaying='y',
+                    side='right',
+                ),
+                legend=dict(x=0.01, y=0.99),
+                hovermode='x unified',
+                height=450,
+                barmode='group'
             )
-            fig_weekly.update_layout(height=400)
-            st.plotly_chart(fig_weekly, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
         
         # Charts row
         col1, col2 = st.columns(2)
@@ -317,107 +425,6 @@ else:
                     fig_queue.update_layout(height=500)
                     st.plotly_chart(fig_queue, use_container_width=True)
     
-    # Operational Metrics
-    elif current_page == "operational":
-        st.header("📈 Operational Metrics")
-        
-        if 'Week' in df_completed.columns and 'Staff' in df_completed.columns:
-            # Create the main chart from your original code
-            staff_per_week = df_completed.groupby('Week')['Staff'].nunique().reset_index()
-            staff_per_week.columns = ['Week', 'Number of Staff']
-            
-            call_volume_per_week = df_completed.groupby('Week').size().reset_index(name='Call Volume')
-            merged_weekly = pd.merge(staff_per_week, call_volume_per_week, on='Week', how='outer').sort_values('Week')
-            
-            if 'ActualWaitTimeMins' in df_completed.columns:
-                avg_wait_time_per_week = df_completed.groupby('Week')['ActualWaitTimeMins'].mean().reset_index()
-                avg_wait_time_per_week.columns = ['Week', 'Avg Wait Time (min)']
-                merged_weekly = merged_weekly.merge(avg_wait_time_per_week, on='Week', how='outer')
-            
-            # Create the plotly figure
-            fig = go.Figure()
-            
-            # Add call volume as a line (left y-axis)
-            fig.add_trace(go.Scatter(
-                x=merged_weekly['Week'],
-                y=merged_weekly['Call Volume'],
-                name='Call Volume',
-                mode='lines+markers',
-                marker=dict(size=7, color='blue'),
-                line=dict(width=2, color='blue'),
-                yaxis='y1'
-            ))
-            
-            # Add staff count as a line (right y-axis)
-            fig.add_trace(go.Scatter(
-                x=merged_weekly['Week'],
-                y=merged_weekly['Number of Staff'],
-                name='Number of Staff',
-                mode='lines+markers',
-                marker=dict(size=7, color='orange'),
-                line=dict(width=2, color='orange'),
-                yaxis='y2'
-            ))
-            
-            # Add average wait time if available
-            if 'Avg Wait Time (min)' in merged_weekly.columns:
-                fig.add_trace(go.Scatter(
-                    x=merged_weekly['Week'],
-                    y=merged_weekly['Avg Wait Time (min)'],
-                    name='Avg Wait Time (min)',
-                    mode='lines+markers',
-                    marker=dict(size=7, color='green'),
-                    line=dict(width=2, color='green', dash='dash'),
-                    yaxis='y3'
-                ))
-            
-            fig.update_layout(
-                title='Call Volume, Number of Staff, and Average Wait Time Per Week',
-                xaxis_title='Week',
-                yaxis=dict(
-                    title='Call Volume',
-                    side='left'
-                ),
-                yaxis2=dict(
-                    title='Number of Staff',
-                    overlaying='y',
-                    side='right',
-                ),
-                yaxis3=dict(
-                    title='Avg Wait Time (min)',
-                    overlaying='y',
-                    side='right',
-                    anchor='free',
-                    position=1,
-                    showgrid=False
-                ),
-                legend=dict(x=0.01, y=0.99),
-                hovermode='x unified',
-                height=450
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Additional operational metrics
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("📊 Weekly Summary")
-                if len(merged_weekly) > 0:
-                    st.dataframe(merged_weekly.round(2), use_container_width=True)
-            
-            with col2:
-                st.subheader("📈 Key Insights")
-                if len(merged_weekly) > 1:
-                    
-                    st.write(f"• **Avg Weekly Volume:** {merged_weekly['Call Volume'].mean():.0f}")
-                    st.write(f"• **Avg Weekly Staff:** {merged_weekly['Number of Staff'].mean():.1f}")
-                    
-                    if 'Avg Wait Time (min)' in merged_weekly.columns:
-                        st.write(f"• **Avg Wait Time:** {merged_weekly['Avg Wait Time (min)'].mean():.1f} min")
-        else:
-            st.warning("Required columns (Week, Staff) not found in the dataset.")
-    
     # Time Analysis
     elif current_page == "time_analysis":
         st.header("⏰ Time Analysis")
@@ -450,6 +457,52 @@ else:
             )
             st.plotly_chart(fig_heatmap, use_container_width=True)
         
+        # --- Hourly Staff, Tickets Completed, and Median Wait Time Chart (Wide Plotly Chart) ---
+        if 'hour' in df_completed.columns and 'Staff' in df_completed.columns and 'ActualWaitTimeMins' in df_completed.columns:
+            staff_per_hour = df_completed.groupby('hour')['Staff'].nunique().reset_index(name='Number of Staff')
+            tickets_completed_per_hour = df_completed.groupby('hour').size().reset_index(name='Tickets Completed')
+            median_wait_per_hour = df_completed.groupby('hour')['ActualWaitTimeMins'].median().reset_index(name='Median Wait Time')
+            hourly_summary = staff_per_hour.merge(tickets_completed_per_hour, on='hour', how='outer')
+            hourly_summary = hourly_summary.merge(median_wait_per_hour, on='hour', how='outer').sort_values('hour')
+
+            fig_hourly_summary = go.Figure()
+            fig_hourly_summary.add_trace(go.Bar(
+            x=hourly_summary['hour'],
+            y=hourly_summary['Number of Staff'],
+            name='Number of Staff',
+            marker_color='orange',
+            opacity=0.7,
+            yaxis='y1'
+            ))
+            fig_hourly_summary.add_trace(go.Bar(
+            x=hourly_summary['hour'],
+            y=hourly_summary['Tickets Completed'],
+            name='Tickets Completed',
+            marker_color='blue',
+            opacity=0.7,
+            yaxis='y1'
+            ))
+            fig_hourly_summary.add_trace(go.Scatter(
+            x=hourly_summary['hour'],
+            y=hourly_summary['Median Wait Time'],
+            name='Median Wait Time',
+            mode='lines+markers',
+            marker=dict(color='red', size=10),
+            line=dict(color='red', width=3, dash='dash'),
+            yaxis='y2'
+            ))
+            fig_hourly_summary.update_layout(
+            title='Hourly Staff Coverage, Tickets Completed, and Median Wait Time',
+            xaxis=dict(title='Hour of Day', tickmode='array', tickvals=hourly_summary['hour'], ticktext=[str(h) for h in hourly_summary['hour']]),
+            yaxis=dict(title='Count (Staff & Tickets)', showgrid=False),
+            yaxis2=dict(title='Median Wait Time (min)', overlaying='y', side='right', showgrid=False, color='red'),
+            legend=dict(x=0.01, y=0.99),
+            height=500,
+            barmode='group',
+            margin=dict(t=40, b=40, l=60, r=60)
+            )
+            st.plotly_chart(fig_hourly_summary, use_container_width=True)
+
         col1, col2 = st.columns(2)
         
         with col1:
@@ -651,7 +704,7 @@ else:
                 st.plotly_chart(fig_staff_volume, use_container_width=True)
             
             with col2:
-                # Supply vs Demand Analysis (Plotly version)
+                # Staff Coverage vs Ticket Volume Analysis (Plotly version)
                 datetime_cols = ['Date', 'CreatedLocalTime', 'Wait time start', 'Completed']
                 for col in datetime_cols:
                     if col in df.columns:
@@ -676,7 +729,7 @@ else:
                     color_continuous_scale='Reds',
                     size_max=18,
                     hover_data=['DayOfWeek', 'hour', 'staff_count', 'ticket_count', 'tickets_per_staff'],
-                    title='Supply vs Demand Analysis',
+                    title='Staff Coverage vs Ticket Volume',
                     labels={
                         'staff_count': 'Staff Available',
                         'ticket_count': 'Tickets Created',
@@ -799,6 +852,11 @@ else:
                 'ActualWaitTimeMins': 'mean' if 'ActualWaitTimeMins' in df.columns else 'count'
             }).round(2)
             service_metrics = service_metrics.reset_index().sort_values('id', ascending=False)
+            # Rename columns
+            service_metrics = service_metrics.rename(columns={
+                'id': 'Count',
+                'ActualWaitTimeMins': 'Average ActualWaitTimeMins'
+            })
             
             # Service performance table
             st.subheader("📊 Service Performance Summary")
