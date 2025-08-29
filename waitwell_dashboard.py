@@ -9,6 +9,7 @@ import numpy as np
 from datetime import datetime, timedelta
 import io
 from streamlit_option_menu import option_menu
+from waitwell_function import *
 
 # Configure page
 st.set_page_config(
@@ -160,7 +161,8 @@ pages = {
     "\U0001F4CA Overview Dashboard": "overview",
     "\u23F0 Time Analysis": "time_analysis",
     "\U0001F465 Staff Performance": "staff_performance",
-    "\U0001F4CB Service Analysis": "service_analysis"
+    "\U0001F4CB Service Analysis": "service_analysis",
+    "\U0001F4C8 Forcasting Staff": "forcasting_staff"
 }
 
 # Use a dark style for the option menu that works in both dark and light modes
@@ -457,13 +459,27 @@ else:
             )
             st.plotly_chart(fig_heatmap, use_container_width=True)
         
-        # --- Hourly Staff, Tickets Completed, and Median Wait Time Chart (Wide Plotly Chart) ---
-        if 'hour' in df_completed.columns and 'Staff' in df_completed.columns and 'ActualWaitTimeMins' in df_completed.columns:
+        # --- Hourly Staff, Tickets Completed, New Tickets Created, and Median Wait Time Chart (Wide Plotly Chart) ---
+        if (
+            'hour' in df_completed.columns and 
+            'Staff' in df_completed.columns and 
+            'ActualWaitTimeMins' in df_completed.columns and
+            'CreatedLocalTime' in df.columns
+        ):
             staff_per_hour = df_completed.groupby('hour')['Staff'].nunique().reset_index(name='Number of Staff')
-            tickets_completed_per_hour = df_completed.groupby('hour').size().reset_index(name='Tickets Completed')
+            tickets_completed_per_hour = df_completed.groupby('hour_completed').size().reset_index(name='Tickets Completed')
             median_wait_per_hour = df_completed.groupby('hour')['ActualWaitTimeMins'].median().reset_index(name='Median Wait Time')
-            hourly_summary = staff_per_hour.merge(tickets_completed_per_hour, on='hour', how='outer')
-            hourly_summary = hourly_summary.merge(median_wait_per_hour, on='hour', how='outer').sort_values('hour')
+            # New tickets created per hour (from all tickets, not just completed)
+            new_tickets_per_hour = df.groupby('hour').size().reset_index(name='New Tickets Created')
+
+            # Merge all summaries
+            hourly_summary = staff_per_hour.merge(tickets_completed_per_hour, left_on='hour', right_on='hour_completed', how='left')
+            hourly_summary = hourly_summary.merge(median_wait_per_hour, on='hour', how='outer')
+            hourly_summary = hourly_summary.merge(new_tickets_per_hour, on='hour', how='outer')
+            hourly_summary = hourly_summary.sort_values('hour')
+
+            # drop 'hour_completed' column as it's not needed anymore
+            hourly_summary = hourly_summary.drop(columns=['hour_completed'], errors='ignore')
 
             fig_hourly_summary = go.Figure()
             fig_hourly_summary.add_trace(go.Bar(
@@ -482,6 +498,14 @@ else:
             opacity=0.7,
             yaxis='y1'
             ))
+            fig_hourly_summary.add_trace(go.Bar(
+            x=hourly_summary['hour'],
+            y=hourly_summary['New Tickets Created'],
+            name='New Tickets Created',
+            marker_color='green',
+            opacity=0.7,
+            yaxis='y1'
+            ))
             fig_hourly_summary.add_trace(go.Scatter(
             x=hourly_summary['hour'],
             y=hourly_summary['Median Wait Time'],
@@ -492,9 +516,9 @@ else:
             yaxis='y2'
             ))
             fig_hourly_summary.update_layout(
-            title='Hourly Staff Coverage, Tickets Completed, and Median Wait Time',
+            title='Hourly Staff Coverage, Tickets Completed, New Tickets Created, and Median Wait Time',
             xaxis=dict(title='Hour of Day', tickmode='array', tickvals=hourly_summary['hour'], ticktext=[str(h) for h in hourly_summary['hour']]),
-            yaxis=dict(title='Count (Staff & Tickets)', showgrid=False),
+            yaxis=dict(title='Count (Staff, Tickets)', showgrid=False),
             yaxis2=dict(title='Median Wait Time (min)', overlaying='y', side='right', showgrid=False, color='red'),
             legend=dict(x=0.01, y=0.99),
             height=500,
@@ -502,6 +526,37 @@ else:
             margin=dict(t=40, b=40, l=60, r=60)
             )
             st.plotly_chart(fig_hourly_summary, use_container_width=True)
+
+            # --- Backlog Estimate Visualization ---
+            if 'New Tickets Created' in hourly_summary.columns and 'Tickets Completed' in hourly_summary.columns:
+                hourly_summary['Backlog Estimate'] = hourly_summary['New Tickets Created'].fillna(0) - hourly_summary['Tickets Completed'].fillna(0)
+                fig_backlog = go.Figure()
+                fig_backlog.add_trace(go.Scatter(
+                    x=hourly_summary['hour'],
+                    y=hourly_summary['Backlog Estimate'],
+                    name='Backlog Estimate',
+                    mode='lines+markers',
+                    marker=dict(color='purple', size=10),
+                    line=dict(color='purple', width=3),
+                ))
+                # Add dashed line at y=0
+                fig_backlog.add_trace(go.Scatter(
+                    x=hourly_summary['hour'],
+                    y=[0]*len(hourly_summary['hour']),
+                    name='Zero Backlog',
+                    mode='lines',
+                    line=dict(color='gray', width=2, dash='dash'),
+                    showlegend=True
+                ))
+                fig_backlog.update_layout(
+                    title='Hourly Backlog Estimate (Tickets Created - Tickets Completed)',
+                    xaxis=dict(title='Hour of Day', tickmode='array', tickvals=hourly_summary['hour'], ticktext=[str(h) for h in hourly_summary['hour']]),
+                    yaxis=dict(title='Backlog Estimate'),
+                    legend=dict(x=0.01, y=0.99),
+                    height=350,
+                    margin=dict(t=40, b=40, l=60, r=60)
+                )
+                st.plotly_chart(fig_backlog, use_container_width=True)
 
         col1, col2 = st.columns(2)
         
@@ -650,8 +705,8 @@ else:
                 'ServiceTimeMins': 'mean',
                 'id': 'count'
             }).rename(columns={'id': 'tickets_handled'})
-            # Filter agents with at least 50 tickets for meaningful analysis
-            agent_efficiency = agent_efficiency[agent_efficiency['tickets_handled'] >= 50]
+            # Filter agents with at least x tickets for meaningful analysis
+            agent_efficiency = agent_efficiency[agent_efficiency['tickets_handled'] >= 1]
             if not agent_efficiency.empty:
                 agent_eff_plot = agent_efficiency.reset_index()
                 agent_eff_plot['Agent Name'] = agent_eff_plot['Staff'].apply(lambda x: x.split('_')[-1] if '_' in x else x)
@@ -680,22 +735,30 @@ else:
         if 'Staff' in df_completed.columns and len(df_completed) > 0:
             staff_metrics = df_completed.groupby('Staff').agg({
                 'id': 'count',
-                'ActualWaitTimeMins': ['mean', 'median'] if 'ActualWaitTimeMins' in df_completed.columns else 'count',
-                'ServiceTimeMins': 'mean' if 'ServiceTimeMins' in df_completed.columns else 'count'
+                'ServiceTimeMins': 'mean'
             }).round(2)
             
             # Flatten column names
-            staff_metrics.columns = ['_'.join(col).strip('_') for col in staff_metrics.columns]
+            staff_metrics.columns = ['_'.join(col).strip('_') if isinstance(col, tuple) else col for col in staff_metrics.columns]
             staff_metrics = staff_metrics.reset_index()
-            staff_metrics = staff_metrics.sort_values('id_count', ascending=False)
-            
+            # rename id to 'Tickets Created'
+            staff_metrics.rename(columns={'id': 'Tickets'}, inplace=True)
+            staff_metrics = staff_metrics.sort_values('Tickets', ascending=False)
+
+            # Calculate average number of tickets created per hour per staff
+            staff_hourly = df_completed.groupby(['Staff', 'hour']).size().reset_index(name='Tickets')
+            avg_tickets_per_hour = staff_hourly.groupby('Staff')['Tickets'].mean().round(1).reset_index(name='Avg Tickets Per Hour')
+            avg_service_time = df_completed.groupby('Staff')['ServiceTimeMins'].mean().round(1).reset_index(name='Average Service Time Mins')
+            staff_metrics = pd.merge(staff_metrics, avg_tickets_per_hour, on='Staff', how='left')
+            staff_metrics = pd.merge(staff_metrics, avg_service_time, on='Staff', how='left')
+
             col1, col2 = st.columns(2)
             
             with col1:
                 # Top performers by volume
                 fig_staff_volume = px.bar(
                     staff_metrics.head(15), 
-                    x='id_count', 
+                    x='Tickets', 
                     y='Staff',
                     orientation='h',
                     title="Top 15 Staff by Ticket Volume"
@@ -704,22 +767,37 @@ else:
                 st.plotly_chart(fig_staff_volume, use_container_width=True)
             
             with col2:
-                # Staff Coverage vs Ticket Volume Analysis (Plotly version)
+                # Staff Coverage vs Ticket Volume Analysis
                 datetime_cols = ['Date', 'CreatedLocalTime', 'Wait time start', 'Completed']
                 for col in datetime_cols:
                     if col in df.columns:
                         df[col] = pd.to_datetime(df[col], errors='coerce')
+
                 completed_df = df[df['Status'] == 'Completed'].copy() if 'Status' in df.columns else df.copy()
+
                 staff_availability = completed_df.groupby(['DayOfWeek', 'hour'])['Staff'].nunique().reset_index()
                 staff_availability.columns = ['DayOfWeek', 'hour', 'staff_count']
-                ticket_demand = df.groupby(['DayOfWeek', 'hour']).size().reset_index()
+
+                ticket_demand = df_completed.groupby(['DayOfWeek', 'hour']).size().reset_index()
                 ticket_demand.columns = ['DayOfWeek', 'hour', 'ticket_count']
+
+                # Median wait time per (DayOfWeek, hour)
+                if 'ActualWaitTimeMins' in completed_df.columns:
+                    median_wait = completed_df.groupby(['DayOfWeek', 'hour'])['ActualWaitTimeMins'].median().reset_index()
+                    median_wait.columns = ['DayOfWeek', 'hour', 'median_wait_time']
+                else:
+                    median_wait = None
                 supply_demand = pd.merge(staff_availability, ticket_demand, on=['DayOfWeek', 'hour'], how='outer').fillna(0)
+                if median_wait is not None:
+                    supply_demand = pd.merge(supply_demand, median_wait, on=['DayOfWeek', 'hour'], how='left')
+                else:
+                    supply_demand['median_wait_time'] = np.nan
                 supply_demand['tickets_per_staff'] = np.where(
                     supply_demand['staff_count'] > 0,
                     supply_demand['ticket_count'] / supply_demand['staff_count'],
                     np.nan
                 )
+
                 supply_demand = supply_demand.replace([np.inf, -np.inf], np.nan).dropna(subset=['tickets_per_staff'])
                 fig_supply_demand = px.scatter(
                     supply_demand,
@@ -728,12 +806,13 @@ else:
                     color='tickets_per_staff',
                     color_continuous_scale='Reds',
                     size_max=18,
-                    hover_data=['DayOfWeek', 'hour', 'staff_count', 'ticket_count', 'tickets_per_staff'],
+                    hover_data=['DayOfWeek', 'hour', 'staff_count', 'ticket_count', 'tickets_per_staff', 'median_wait_time'],
                     title='Staff Coverage vs Ticket Volume',
                     labels={
                         'staff_count': 'Staff Available',
                         'ticket_count': 'Tickets Created',
-                        'tickets_per_staff': 'Tickets per Staff'
+                        'tickets_per_staff': 'Tickets per Staff',
+                        'median_wait_time': 'Median Wait Time (min)'
                     }
                 )
                 # Add trend line if enough data
@@ -759,15 +838,56 @@ else:
             
             # Staff performance table
             st.subheader("📊 Staff Performance Summary")
-            display_cols = ['Staff', 'id_count']
-            if 'ActualWaitTimeMins_mean' in staff_metrics.columns:
-                display_cols.extend(['ActualWaitTimeMins_mean', 'ActualWaitTimeMins_median'])
-            if 'ServiceTimeMins_mean' in staff_metrics.columns:
-                display_cols.append('ServiceTimeMins_mean')
-            
-            st.dataframe(staff_metrics[display_cols].head(20), use_container_width=True)
-        else:
-            st.warning("Staff data not available in the dataset.")
+            display_cols = ['Staff', 'Tickets', 'Avg Tickets Per Hour', 'Average Service Time Mins']
+            st.dataframe(staff_metrics[display_cols], use_container_width=True)
+
+            # --- Staff Hourly Summary Table ---
+            st.subheader("📊 Staff Hourly Summary (by Date)")
+            def staff_hourly_summary(df, date):
+                filtered = df[
+                    (df['Date'] == date) &
+                    (df['Status'] == 'Completed')
+                ].copy()
+                filtered['Completed'] = pd.to_datetime(filtered['Completed'])
+                summary = filtered.groupby('Staff').agg(
+                    total_tickets=('id', 'count'),
+                    first_completed=('Completed', 'min'),
+                    last_completed=('Completed', 'max'),
+                ).reset_index()
+                filtered['hour_completed'] = filtered['Completed'].dt.hour
+                tickets_per_hour = filtered.groupby(['Staff', 'hour_completed']).size().unstack(fill_value=0)
+                summary = summary.merge(tickets_per_hour, left_on='Staff', right_index=True, how='left')
+                return summary
+
+            # Streamlit control for date only
+            available_dates = np.sort(df_completed['Date'].dt.strftime('%Y-%m-%d').unique())
+            selected_date = st.selectbox("Select Date:", available_dates, index=0 if len(available_dates) > 0 else None)
+
+            if selected_date:
+                hourly_summary_df = staff_hourly_summary(df_completed, selected_date)
+                if not hourly_summary_df.empty:
+                    # Styling: color scale from red to green for only hour_completed columns
+                    def color_scale(val, vmin, vmax):
+                        # Discrete color categories
+                        if val == 0:
+                            return 'background-color: rgb(195,83,84)'
+                        elif 1 <= val < 10:
+                            return 'background-color: rgb(188,176,99)'
+                        elif val >= 10:
+                            return 'background-color: rgb(99,190,123)'
+                        else:
+                            return ''
+                    # Find only hour_completed columns (int type)
+                    style_cols = [col for col in hourly_summary_df.columns if isinstance(col, int)]
+                    if style_cols:
+                        vmin = hourly_summary_df[style_cols].min().min()
+                        vmax = hourly_summary_df[style_cols].max().max()
+                        styled_df = hourly_summary_df.style.applymap(lambda v: color_scale(v, vmin, vmax) if pd.notnull(v) and isinstance(v, (int, float)) else '', subset=style_cols)
+                        st.dataframe(styled_df, use_container_width=True)
+                    else:
+                        st.dataframe(hourly_summary_df, use_container_width=True)
+                else:
+                    st.info("No completed tickets for the selected date.")
     
     # Service Analysis
     elif current_page == "service_analysis":
@@ -863,6 +983,42 @@ else:
             st.dataframe(service_metrics.head(20), use_container_width=True)
         else:
             st.warning("Service Type data not available in the dataset.")
+
+    elif current_page == "forcasting_staff":
+        st.header("📈 Forcasting Staff")
+        st.subheader("🔮 Find Optimal Staff Count")
+        # Input fields for user selection
+        day_options = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        selected_day = st.selectbox("Select Day of Week:", day_options, index=0, width=200)
+        # hour = st.number_input("Select Hour (0-23):", min_value=0, max_value=23, value=11, width=200)
+        import streamlit as st
+
+        # Create a list of hours from 8 AM to 11 PM
+        hours = [f"{h % 12 or 12} {'AM' if h < 12 else 'PM'}" for h in range(8, 24)]
+
+        # Dropdown for selecting hour
+        hour = st.selectbox("Select Hour:", hours, index=3, width=200)  # Default to 11 AM
+
+        # Convert selected label back to 24-hour format if needed
+        selected_hour_24 = hours.index(hour) + 8
+
+        sla_target_minutes = st.number_input("Target Average Waiting Time (minutes):", min_value=1, max_value=120, value=15, width=200)
+        location_options = df_completed['Location Name'].unique().tolist() if 'Location Name' in df_completed.columns else []
+        queue_options = df_completed['Queue Name'].unique().tolist() if 'Queue Name' in df_completed.columns else []
+
+        selected_location = st.selectbox("Select Location:", location_options, index=0, width=400) if location_options else None
+        selected_queue = st.selectbox("Select Queue:", queue_options, index=0, width=400) if queue_options else None
+        if st.button("Calculate Optimal Staff Count"):
+            result = find_optimal_staff_count(
+            df_completed,
+            location_name=selected_location,
+            queue_name=selected_queue,
+            day_of_week=selected_day,
+            hour=selected_hour_24,
+            sla_target_minutes=sla_target_minutes
+            )
+            if result is not None:
+                st.write('')
 
 # Footer
 st.sidebar.markdown("---")
